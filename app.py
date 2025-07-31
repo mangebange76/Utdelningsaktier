@@ -12,7 +12,7 @@ credentials = Credentials.from_service_account_info(
 client = gspread.authorize(credentials)
 sheet = client.open_by_url(st.secrets["SHEET_URL"]).worksheet("Bolag")
 
-# --- Ladda in data från arket ---
+# --- Ladda data ---
 def load_data():
     try:
         df = pd.DataFrame(sheet.get_all_records())
@@ -26,12 +26,13 @@ def load_data():
 
 df = load_data()
 
-st.title("📈 Utdelningsaktier – analys och filtrering")
+st.title("📈 Utdelningsaktier – analys & filtrering")
 
-# --- Val för riktkursavdrag ---
-procent_val = st.selectbox("Dra av % från 52w High för att beräkna riktkurs", [i for i in range(1, 11)], index=4)
+# --- Inställning för riktkurs ---
+procent_val = st.selectbox("Dra av % från 52w High för att räkna riktkurs", list(range(1, 11)), index=4)
 avdrag_procent = procent_val / 100
 
+# --- Formulär för nytt bolag ---
 st.subheader("➕ Lägg till eller uppdatera bolag")
 
 with st.form("bolagsformulär"):
@@ -73,6 +74,7 @@ with st.form("bolagsformulär"):
 
     submitted = st.form_submit_button("Spara bolag")
 
+# --- Rekommendationslogik ---
 def beräkna_rekommendation(kurs, riktkurs):
     if kurs is None or riktkurs is None:
         return "?"
@@ -88,6 +90,7 @@ def beräkna_rekommendation(kurs, riktkurs):
     else:
         return "Sälj"
 
+# --- Spara ny rad ---
 if submitted and ticker and kurs and high_52w:
     try:
         da = round((utdelning / kurs) * 100, 2) if utdelning else 0.0
@@ -110,13 +113,11 @@ if submitted and ticker and kurs and high_52w:
             "Datakälla utdelning": utdelningskälla
         }
 
-        # Kolla om bolaget redan finns, uppdatera annars lägg till
         df = df[df["Ticker"] != ticker]
         df = pd.concat([df, pd.DataFrame([ny_rad])], ignore_index=True)
 
-        # Skriv tillbaka till Google Sheets
         sheet.clear()
-        sheet.append_row(list(ny_rad.keys()))  # kolumnrubriker
+        sheet.append_row(list(ny_rad.keys()))
         for row in df.to_dict(orient="records"):
             sheet.append_row(list(row.values()))
 
@@ -124,10 +125,10 @@ if submitted and ticker and kurs and high_52w:
     except Exception as e:
         st.error(f"Något gick fel vid sparandet: {e}")
 
+# --- Presentation med filter ---
 st.subheader("📋 Databas – filtrering & bläddring")
 
 if not df.empty:
-    # --- Filtrering ---
     st.markdown("### 🔎 Filtrera:")
     kol1, kol2, kol3 = st.columns(3)
 
@@ -144,7 +145,6 @@ if not df.empty:
     with kol3:
         endast_ägda = st.checkbox("Visa endast aktier jag äger")
 
-    # --- Tillämpa filter ---
     filtrerad = df.copy()
     if valda_rek:
         filtrerad = filtrerad[filtrerad["Rekommendation"].isin(valda_rek)]
@@ -153,7 +153,6 @@ if not df.empty:
     if endast_ägda:
         filtrerad = filtrerad[filtrerad["Äger"] == "Ja"]
 
-    # --- Färgkodning ---
     def färgkod(row):
         färg = ""
         match row["Rekommendation"]:
@@ -164,7 +163,6 @@ if not df.empty:
             case "Sälj": färg = "background-color: lightcoral"
         return [färg] * len(row)
 
-    # --- Bläddringsbar vy ---
     sidstorlek = 5
     total = len(filtrerad)
     sidtotal = max((total - 1) // sidstorlek + 1, 1)
