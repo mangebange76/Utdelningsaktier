@@ -9,7 +9,7 @@ from google.oauth2.service_account import Credentials
 st.set_page_config(page_title="Aktieanalys och investeringsförslag", layout="wide")
 
 SHEET_URL = st.secrets["SHEET_URL"]
-SHEET_NAME = "Blad1"
+SHEET_NAME = "Bolag"
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 credentials = Credentials.from_service_account_info(st.secrets["GOOGLE_CREDENTIALS"], scopes=scope)
 client = gspread.authorize(credentials)
