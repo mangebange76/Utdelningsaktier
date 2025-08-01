@@ -1,13 +1,12 @@
 import streamlit as st
 import pandas as pd
 import gspread
-import time
 import yfinance as yf
+import time
 from google.oauth2.service_account import Credentials
 
-st.set_page_config(page_title="Utdelningsaktier", layout="wide")
+st.set_page_config(page_title="📈 Utdelningsaktier", layout="wide")
 
-# Google Sheets setup
 SHEET_URL = st.secrets["SHEET_URL"]
 SHEET_NAME = "Bolag"
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -25,131 +24,149 @@ def hamta_data():
 def spara_data(df):
     sheet = skapa_koppling()
     sheet.clear()
-    sheet.update([df.columns.tolist()] + df.astype(str).values.tolist())
+    sheet.update([df.columns.values.tolist()] + df.astype(str).values.tolist())
 
-def säkerställ_kolumner(df):
-    kolumner = [
-        "Ticker", "Bolagsnamn", "Utdelning", "Valuta", "Äger", "Kurs",
-        "52w High", "Direktavkastning (%)", "Riktkurs", "Uppside (%)",
-        "Rekommendation", "Datakälla utdelning"
-    ]
-    for kol in kolumner:
-        if kol not in df.columns:
-            df[kol] = ""
+def konvertera_typer(df):
+    for kol in ["Kurs", "52w High", "Utdelning"]:
+        if kol in df.columns:
+            df[kol] = pd.to_numeric(df[kol], errors="coerce").fillna(0.0)
     return df
 
-def beräkna_kolumner(df, procentsats):
-    df["Kurs"] = pd.to_numeric(df["Kurs"], errors="coerce").fillna(0)
-    df["52w High"] = pd.to_numeric(df["52w High"], errors="coerce").fillna(0)
-    df["Utdelning"] = pd.to_numeric(df["Utdelning"], errors="coerce").fillna(0)
-    df["Riktkurs"] = df["52w High"] * (1 - procentsats / 100)
-    df["Direktavkastning (%)"] = (df["Utdelning"] / df["Kurs"]) * 100
+def berakna_riktkurs(df, procent):
+    df["Riktkurs"] = df["52w High"] * (1 - procent / 100)
+    return df
+
+def berakna_uppsida(df):
     df["Uppside (%)"] = ((df["Riktkurs"] - df["Kurs"]) / df["Kurs"]) * 100
-    df["Rekommendation"] = df["Uppside (%)"].apply(lambda x: (
-        "Sälj" if x < 0 else
-        "Pausa" if x < 3 else
-        "Behåll" if x < 10 else
-        "Öka" if x < 50 else
-        "Köp kraftigt"
-    ))
     return df
 
-def färg_rekommendation(val):
-    return (
-        "background-color: red" if val == "Sälj" or val == "Pausa" else
-        "background-color: lightgreen" if val == "Öka" else
-        "background-color: green" if val == "Köp kraftigt" else
-        "background-color: lightblue" if val == "Behåll" else ""
-    )
+def berakna_direktavkastning(df):
+    df["Direktavkastning (%)"] = (df["Utdelning"] / df["Kurs"]) * 100
+    return df
 
-def uppdatera_data(df):
-    st.subheader("🔄 Uppdatera kurser och utdelning")
+def berakna_rekommendation(df):
+    def rek(row):
+        if row["Kurs"] <= row["Riktkurs"] * 0.7:
+            return "Köp kraftigt"
+        elif row["Kurs"] <= row["Riktkurs"] * 0.9:
+            return "Öka"
+        elif row["Kurs"] <= row["Riktkurs"]:
+            return "Behåll"
+        elif row["Kurs"] <= row["Riktkurs"] * 1.1:
+            return "Pausa"
+        else:
+            return "Sälj"
+    df["Rekommendation"] = df.apply(rek, axis=1)
+    return df
 
-    val = st.radio("Vad vill du uppdatera?", ["Alla bolag", "Endast ett bolag"])
-    if val == "Endast ett bolag":
-        ticker = st.selectbox("Välj bolag", sorted(df["Ticker"].unique()))
-        tickers = [ticker]
-    else:
-        tickers = df["Ticker"].unique()
+def uppdatera_yahoo_data(df, valt_ticker=None):
+    misslyckade = []
+    lyckade = 0
+    total = len(df) if not valt_ticker else 1
+    status = st.empty()
+    bar = st.progress(0)
 
-    if st.button("Uppdatera"):
-        misslyckade = []
-        lyckade = 0
-        total = len(tickers)
-        status = st.empty()
-        bar = st.progress(0)
+    for i, row in df.iterrows():
+        ticker = row["Ticker"]
+        if valt_ticker and ticker != valt_ticker:
+            continue
 
-        for i, ticker in enumerate(tickers, start=1):
-            status.text(f"🔄 Uppdaterar {i} av {total} – {ticker}")
-            try:
-                aktie = yf.Ticker(ticker)
-                info = aktie.info
-                kurs = info.get("regularMarketPrice", None)
-                high = info.get("fiftyTwoWeekHigh", None)
-                utd = info.get("dividendRate", None)
-                if kurs:
-                    df.loc[df["Ticker"] == ticker, "Kurs"] = kurs
-                if high:
-                    df.loc[df["Ticker"] == ticker, "52w High"] = high
-                if utd:
-                    df.loc[df["Ticker"] == ticker, "Utdelning"] = utd
-                    df.loc[df["Ticker"] == ticker, "Datakälla utdelning"] = "Yahoo Finance"
-                lyckade += 1
-            except:
+        status.text(f"🔄 Uppdaterar {lyckade + 1} av {total} – {ticker}")
+        try:
+            info = yf.Ticker(ticker).info
+            kurs = info.get("regularMarketPrice", None)
+            high = info.get("fiftyTwoWeekHigh", None)
+            utdelning = info.get("dividendRate", 0.0)
+            källa = "Yahoo Finance" if utdelning else "Manuell"
+
+            if kurs is None or high is None:
                 misslyckade.append(ticker)
-            bar.progress(i / total)
-            time.sleep(1)
+                continue
 
-        st.success(f"✅ Uppdatering klar. {lyckade} bolag uppdaterade.")
-        if misslyckade:
-            st.warning("Kunde inte uppdatera:
+            df.at[i, "Kurs"] = round(kurs, 2)
+            df.at[i, "52w High"] = round(high, 2)
+            df.at[i, "Utdelning"] = round(utdelning or 0.0, 2)
+            df.at[i, "Datakälla utdelning"] = källa
+            lyckade += 1
+
+        except Exception:
+            misslyckade.append(ticker)
+
+        bar.progress((lyckade + len(misslyckade)) / total)
+        time.sleep(1)
+
+    status.text("✅ Alla bolag är uppdaterade!")
+    st.success(f"{lyckade} av {total} bolag uppdaterade.")
+    if misslyckade:
+        st.warning("Kunde inte uppdatera följande tickers:
 " + ", ".join(misslyckade))
-        spara_data(df)
+    return df
 
-def visa_tabell(df, procentsats):
-    st.subheader("📋 Alla bolag")
-    äger = st.checkbox("Visa endast ägda bolag")
-    if äger:
-        df = df[df["Äger"].astype(str).str.lower().isin(["ja", "yes", "1"])]
+def bladdra_forslag(df):
+    df = df[df["Rekommendation"].isin(["Köp kraftigt", "Öka", "Behåll"])].copy()
+    df = df.sort_values(by="Uppside (%)", ascending=False).reset_index(drop=True)
 
-    antal = len(df)
-    st.caption(f"Totalt antal bolag att bläddra mellan: {antal}")
+    st.markdown(f"**Antal förslag:** {len(df)} st")
 
-    df = beräkna_kolumner(df, procentsats)
-    df = df.sort_values("Uppside (%)", ascending=False).reset_index(drop=True)
+    if df.empty:
+        st.info("Inga investeringsförslag just nu.")
+        return
 
-    if "visnings_index" not in st.session_state:
-        st.session_state.visnings_index = 0
+    if "forslags_index" not in st.session_state:
+        st.session_state.forslags_index = 0
 
-    if st.session_state.visnings_index >= len(df):
-        st.session_state.visnings_index = 0
+    index = st.session_state.forslags_index
+    if index >= len(df):
+        st.session_state.forslags_index = 0
+        index = 0
 
-    rad = df.iloc[st.session_state.visnings_index]
-    st.markdown(f"### 📈 Förslag {st.session_state.visnings_index + 1} av {antal}")
-    st.write(f"**{rad['Bolagsnamn']} ({rad['Ticker']})**")
-    st.write(f"Kurs: {rad['Kurs']}, Riktkurs: {rad['Riktkurs']}, Uppside: {round(rad['Uppside (%)'], 2)}%")
-    st.write(f"Utdelning: {rad['Utdelning']}, Direktavkastning: {round(rad['Direktavkastning (%)'], 2)}%")
-    st.write(f"Rekommendation: **{rad['Rekommendation']}**")
+    rad = df.iloc[index]
+    st.subheader(f"📌 Förslag {index+1} av {len(df)}")
+    st.markdown(f"""
+**Ticker:** {rad['Ticker']}  
+**Bolagsnamn:** {rad['Bolagsnamn']}  
+**Aktuell kurs:** {round(rad['Kurs'], 2)}  
+**Riktkurs:** {round(rad['Riktkurs'], 2)}  
+**Uppside:** {round(rad['Uppside (%)'], 2)}%  
+**Direktavkastning:** {round(rad['Direktavkastning (%)'], 2)}%  
+**Rekommendation:** {rad['Rekommendation']}
+""")
 
-    if st.button("➡️ Nästa"):
-        st.session_state.visnings_index += 1
-
-    styled_df = df.style.applymap(färg_rekommendation, subset=["Rekommendation"])
-    st.dataframe(styled_df, use_container_width=True)
+    if st.button("➡️ Nästa förslag"):
+        st.session_state.forslags_index += 1
 
 def main():
-    st.title("💸 Utdelningsaktier – analys")
+    st.title("📈 Utdelningsaktier – investeringsanalys")
 
     df = hamta_data()
-    df = säkerställ_kolumner(df)
+    df = konvertera_typer(df)
 
-    procentsats = st.sidebar.selectbox("Procent under 52w high för riktkurs", list(range(1, 11)), index=4)
+    procent = st.sidebar.selectbox("📉 Riktkurs % under 52w high", list(range(1, 11)), index=4)
+    df = berakna_riktkurs(df, procent)
+    df = berakna_uppsida(df)
+    df = berakna_direktavkastning(df)
+    df = berakna_rekommendation(df)
 
-    meny = st.sidebar.radio("Meny", ["Visa bolag", "Uppdatera data"])
-    if meny == "Visa bolag":
-        visa_tabell(df, procentsats)
-    elif meny == "Uppdatera data":
-        uppdatera_data(df)
+    meny = st.sidebar.radio("📌 Välj vy", ["Förslag", "Uppdatera kurser", "Tabell"])
+
+    if meny == "Förslag":
+        bladdra_forslag(df)
+    elif meny == "Uppdatera kurser":
+        st.subheader("🔄 Uppdatera data från Yahoo Finance")
+        alla = st.checkbox("Uppdatera alla bolag")
+        if alla:
+            if st.button("Starta uppdatering"):
+                df = uppdatera_yahoo_data(df)
+                spara_data(df)
+        else:
+            tickers = df["Ticker"].tolist()
+            valt = st.selectbox("Välj bolag", tickers)
+            if st.button(f"Uppdatera {valt}"):
+                df = uppdatera_yahoo_data(df, valt_ticker=valt)
+                spara_data(df)
+    else:
+        st.subheader("📊 Fullständig tabell")
+        st.dataframe(df, use_container_width=True)
 
 if __name__ == "__main__":
     main()
