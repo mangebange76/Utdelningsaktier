@@ -4,8 +4,6 @@ import yfinance as yf
 import gspread
 import time
 from datetime import datetime
-from oauth2client.service_account import ServiceAccountCredentials
-
 # Konstanter
 SHEET_URL = st.secrets["SHEET_URL"]
 SHEET_NAME = "Bolag"
