@@ -1,34 +1,27 @@
 import streamlit as st
 import pandas as pd
-import time
-import yfinance as yf
 import gspread
-from oauth2client.service_account import ServiceAccountCredentials
+import yfinance as yf
+import time
+from google.oauth2.service_account import Credentials
 
-st.set_page_config(page_title="Utdelningsaktier", layout="wide")
-
-SHEET_URL = st.secrets["SHEET_URL"]
-SHEET_NAME = "Bolag"
-
-# Autentisering och koppling till Google Sheet
+# --- Google Sheets-koppling ---
 def skapa_koppling():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    creds = ServiceAccountCredentials.from_json_keyfile_dict(st.secrets["GOOGLE_CREDENTIALS"], scope)
-    client = gspread.authorize(creds)
-    sheet = client.open_by_url(SHEET_URL).worksheet(SHEET_NAME)
+    credentials = Credentials.from_service_account_info(st.secrets["GOOGLE_CREDENTIALS"], scopes=scope)
+    client = gspread.authorize(credentials)
+    sheet = client.open_by_url(st.secrets["SHEET_URL"]).worksheet("Bolag")
     return sheet
 
-# Hämta data från Google Sheets
 def hamta_data():
     sheet = skapa_koppling()
     data = sheet.get_all_records()
     return pd.DataFrame(data)
 
-# Spara data till Google Sheets
 def spara_data(df):
     sheet = skapa_koppling()
     sheet.clear()
-    sheet.append_row(df.columns.tolist())
+    sheet.append_row(list(df.columns))
     for _, row in df.iterrows():
         sheet.append_row([str(x) for x in row.tolist()])
 
