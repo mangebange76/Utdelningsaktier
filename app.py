@@ -211,48 +211,58 @@ def analysvy(df):
     st.subheader("📋 Alla bolag i databasen")
     st.dataframe(df)
 
+def hämta_data_yahoo(ticker):
+    try:
+        aktie = yf.Ticker(ticker)
+        info = aktie.info
+        data = {
+            "Kurs": info.get("currentPrice"),
+            "52w High": info.get("fiftyTwoWeekHigh"),
+            "Utdelning": info.get("dividendRate"),
+            "Valuta": info.get("currency"),
+            "Bolagsnamn": info.get("longName"),
+            "EPS TTM": info.get("trailingEps"),
+            "EPS om 2 år": None,
+        }
+
+        # Hämta förväntad EPS om 2 år om tillgängligt
+        try:
+            estimates = aktie.earnings_trend
+            if estimates is not None and "trend" in estimates:
+                for entry in estimates["trend"]:
+                    if entry.get("period") == "+2y":
+                        data["EPS om 2 år"] = entry.get("earningsEstimate", {}).get("avg")
+                        break
+        except Exception:
+            pass
+
+        return data
+    except Exception as e:
+        print(f"Fel vid hämtning av data för {ticker}: {e}")
+        return {}
+
 def massuppdatera_alla(df):
-    st.subheader("🔄 Massuppdatering från Yahoo Finance")
-
-    if st.button("Starta massuppdatering"):
-        total = len(df)
-        uppdaterade = 0
-        kunde_inte = []
-
-        for i, rad in df.iterrows():
-            st.write(f"⏳ Uppdaterar bolag {i+1} av {total}: {rad['Ticker']}")
-            nytt_data = hämta_data_yahoo(rad["Ticker"])
-            time.sleep(1)
-
-            if nytt_data:
-                for kolumn, värde in nytt_data.items():
-                    if kolumn in df.columns:
-                        df.at[i, kolumn] = värde
-                uppdaterade += 1
-            else:
-                kunde_inte.append(rad["Ticker"])
-
-        if kunde_inte:
-            st.warning(f"Kunde inte uppdatera följande tickers: {', '.join(kunde_inte)}")
+    total = len(df)
+    st.info("Startar massuppdatering från Yahoo Finance...")
+    misslyckade = []
+    for i, (index, rad) in enumerate(df.iterrows(), start=1):
+        st.write(f"Uppdaterar bolag {i} av {total}: {rad['Ticker']}")
+        nytt_data = hämta_data_yahoo(rad["Ticker"])
+        if nytt_data.get("Kurs") is not None:
+            for nyckel, värde in nytt_data.items():
+                if nyckel in df.columns and pd.notna(värde):
+                    df.at[index, nyckel] = värde
+            df.at[index, "Datakälla utdelning"] = "Yahoo Finance"
         else:
-            st.success(f"✅ Uppdatering klar! {uppdaterade} av {total} bolag uppdaterades.")
+            misslyckade.append(rad["Ticker"])
+        time.sleep(1)
 
-        if st.checkbox("Bekräfta att du vill spara ändringarna"):
-            spara_data(df)
-        else:
-            st.warning("❗ Ändringar sparas inte förrän du bekräftar ovan.")
-
-def säkerställ_kolumner(df):
-    nödvändiga_kolumner = [
-        "Ticker", "Bolagsnamn", "Utdelning", "Valuta", "Äger",
-        "Kurs", "52w High", "Direktavkastning (%)", "Riktkurs", "Uppside (%)",
-        "Rekommendation", "Datakälla utdelning", "EPS TTM", "EPS om 2 år",
-        "Payout ratio TTM (%)", "Payout ratio 2 år (%)"
-    ]
-    for kolumn in nödvändiga_kolumner:
-        if kolumn not in df.columns:
-            df[kolumn] = ""
-    return df
+    df = beräkna_alla_kolumner(df)
+    spara_data(df)
+    if misslyckade:
+        st.warning("Kunde inte uppdatera följande tickers:\n" + ", ".join(misslyckade))
+    else:
+        st.success("Massuppdatering slutförd!")
 
 def main():
     st.set_page_config(page_title="📊 Utdelningsaktier", layout="wide")
