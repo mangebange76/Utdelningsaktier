@@ -116,7 +116,7 @@ def beräkna_värden(row):
 def lägg_till_eller_uppdatera(df):
     st.subheader("Lägg till eller uppdatera bolag")
     val = st.selectbox("Välj bolag att uppdatera eller välj 'Nytt bolag'", ["Nytt bolag"] + sorted(df["Ticker"].unique()))
-    med st.form("lägg_till_formulär"):
+    with st.form("lägg_till_formulär"):
         ticker = st.text_input("Ticker", "" if val == "Nytt bolag" else val)
         bolagsnamn = st.text_input("Bolagsnamn")
         utdelning = st.number_input("Utdelning", min_value=0.0, value=0.0)
